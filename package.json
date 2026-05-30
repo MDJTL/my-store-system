@@ -1,0 +1,14 @@
+{
+  "name": "便利店智能陈列管理系统",
+  "main": "index.html",
+  "version": "1.0.0",
+  "window": {
+    "title": "便利店智能陈列管理系统",
+    "width": 1280,
+    "height": 800,
+    "min_width": 1000,
+    "min_height": 600,
+    "toolbar": false,
+    "resizable": true
+  }
+}

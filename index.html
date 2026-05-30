@@ -1,0 +1,2271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<script>
+// ========== 纯联网授权（无本地缓存、每次登录强制校验） ==========
+const SERVER_URL = "https://raw.githubusercontent.com/MDJTL/my-store-system/main/license.json";
+const USER_ID_KEY = "user_license_id";
+let isVerified = false;
+
+// 生成/读取设备唯一ID（仅用于云端识别，不做本地放行）
+function getDeviceUserId() {
+    let userId = localStorage.getItem(USER_ID_KEY);
+    if (!userId) {
+        userId = "user_" + Date.now() + "_" + Math.random().toString(36).substr(2);
+        localStorage.setItem(USER_ID_KEY, userId);
+    }
+    return userId;
+}
+
+// 登录后强制联网校验授权（无本地缓存、断网直接拒绝）
+async function checkLicenseAfterLogin() {
+    // 已本轮验证通过，不再重复请求
+    if (isVerified) return true;
+
+    const userId = getDeviceUserId();
+
+    try {
+        // 强制联网请求云端授权文件
+        const res = await fetch(SERVER_URL, { cache: "no-cache" });
+        if (!res.ok) throw new Error("请求失败");
+
+        const data = await res.json();
+        // 判断设备ID是否在云端付费白名单内
+        if (data.paid_users && Array.isArray(data.paid_users) && data.paid_users.includes(userId)) {
+            isVerified = true;
+            return true;
+        } else {
+            // 不在白名单：弹出续费页面，拒绝进入系统
+            showRenewWindow(userId);
+            return false;
+        }
+    } catch (err) {
+        // 断网/网络错误：直接提示，拒绝使用
+        alert("网络连接失败，必须联网验证授权才能使用系统，请检查网络后重试！");
+        return false;
+    }
+}
+
+// 授权过期/未授权 全屏续费提示
+function showRenewWindow(userId) {
+    document.body.innerHTML = `
+    <div style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;display:flex;align-items:center;justify-content:center;color:white;text-align:center;z-index:99999;">
+        <div style="background:#1a1a1a; padding:30px; border-radius:12px; max-width:400px;">
+            <h1 style="margin-bottom:15px;">系统授权未开通/已到期</h1>
+            <p style="margin:10px 0;">您的设备授权ID：<strong>${userId}</strong></p>
+            <p style="margin:10px 0; font-size:18px; color:#ffcc00;">续费费用：¥50/30天 或 ¥500/永久授权</p>
+            <hr style="border:1px solid #333; margin:20px 0;">
+            <p style="margin:10px 0;">请添加管理员微信开通授权：</p>
+            <p style="font-size:20px; color:#4ade80; font-weight:bold;">909654682</p>
+            <p style="margin-top:20px; color:#aaa; font-size:14px;">发送您的授权ID，付款开通后即可正常使用</p>
+        </div>
+    </div>`;
+}
+
+// 关键：把你原来的登录按钮逻辑，改成下面这样
+// 找到你原来的登录按钮点击事件，替换成：
+/*
+document.getElementById("loginBtn").addEventListener("click", async function() {
+    // 1. 先执行你原来的账号密码验证逻辑
+    const loginSuccess = await 你原来的登录验证函数();
+
+    if (loginSuccess) {
+        // 2. 登录成功后，再验证授权
+        const licenseValid = await checkLicenseAfterLogin();
+        if (licenseValid) {
+            // 3. 授权通过，进入系统
+            你原来的进入系统逻辑();
+        }
+        // 授权不通过，已经被 showRenewWindow 拦截，不会进入系统
+    }
+});
+*/
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>便利店智能陈列管理系统</title>
+<!-- 禁止右键、禁止查看源码 -->
+<script>
+document.oncontextmenu = function(){return false;}
+document.onkeydown = function(e){
+    if(e.keyCode === 123) return false; // 禁用F12
+    if(e.ctrlKey && e.shiftKey && e.keyCode === 73) return false; // 禁用Ctrl+Shift+I
+    if(e.ctrlKey && e.keyCode === 85) return false; // 禁用Ctrl+U查看源码
+}
+</script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+        body {
+            background: #f5f7fa;
+            padding: 20px;
+        }
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .store-manager {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .store-select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-width: 200px;
+        }
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .stat-card {
+            flex: 1;
+            min-width: 180px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .stat-card h3 {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        .stat-card .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        .text-red {
+            color: #ef4444;
+        }
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            background: #3b82f6;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        button.active {
+            background: #16a34a;
+        }
+        .view-toggle {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+        .main {
+            display: flex;
+            gap: 20px;
+            flex-wrap: nowrap;
+            width: 100%;
+        }
+        .grid-section {
+            flex: 1;
+            min-width: 0;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .display-container {
+            width: 100%;
+            height: 700px;
+            border: 1px solid #ddd;
+            position: relative;
+            background: #ffffff;
+            overflow: auto;
+            padding: 20px;
+            z-index: 1;
+        }
+        .display-area {
+            position: relative;
+            width: fit-content;
+            min-width: 100%;
+            min-height: 100%;
+            background: #fef3c7;
+            border: 2px solid #92400e;
+            border-radius: 8px;
+            padding: 10px 15px 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            z-index: 2;
+            background-clip: padding-box;
+        }
+        .display-area.cooler {
+            background: #cce0ff;
+            border-color: #6699cc;
+        }
+        .display-area.fence {
+            background: #e6f7ff;
+            border-color: #40a9ff;
+        }
+        .display-title {
+    position: absolute;
+    top: -20px;
+    left: 10px;
+    font-weight: bold;
+    font-size: 18px;
+    z-index: 10;
+    background: #ffffff;
+    padding: 5px 10px;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    width: 120px;
+}
+.display-title-input {
+    border: none;
+    font-weight: bold;
+    font-size: 18px;
+    background: transparent;
+    width: 100%;
+    outline: none;
+}
+        .display-slot {
+    width: 110px;
+    height: 150px; /* 把原来的130px改成180px（可以按需调大，比如160/170/190） */
+    background: #fff9e6;
+    border: none;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 2px 1px;
+    margin: 0 1px;
+    font-size: 10px;
+    overflow: hidden;
+    text-align: center;
+    box-shadow: none;
+    z-index: 3;
+    position: relative;
+    border-bottom: 2px solid #facc15;
+}
+.display-slot-img {
+    width: 100%;
+    height: 120px;
+    object-fit: contain;
+    border-radius: 0;
+    margin-bottom: 4px;
+    margin-top: -10px; /* 新增，负数越大图片越往上 */
+}
+        .row-container {
+            display: flex;
+            justify-content: flex-start;
+            margin-bottom: 2px;
+            width: 100%;
+            align-items: center;
+        }
+        .display-slot-name {
+            font-weight: bold;
+            font-size: 10px;
+            line-height: 1;
+            margin-bottom: 0;
+             /* 关键：设置自动换行 */
+    white-space: normal; /* 允许换行 */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+    max-height: 2.2em; /* 限制最多显示2行文字 */
+}
+        .display-slot-barcode {
+            font-size: 14px;
+            color: #000;
+            margin-bottom: 0;
+        }
+        .display-slot-sales {
+            font-size: 8px;
+            color: #fff;
+            background: #d97706;
+            padding: 0 2px;
+            border-radius: 1px;
+        }
+        .row-level-label {
+            width: 60px;
+            text-align: center;
+            font-weight: bold;
+            color: #ef4444;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        .fullscreen-view {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: white;
+            z-index: 99999;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .fullscreen-view .display-container {
+            flex: 1;
+            width: 100%;
+            height: auto;
+            border: none;
+            background: #fff;
+        }
+        .fullscreen-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            justify-content: flex-end;
+            align-items: center;
+        }
+        .zoom-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #333;
+        }
+        .zoom-control input[type="range"] {
+            width: 150px;
+        }
+        .product-section {
+            width: 450px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .grid-row {
+            display: flex;
+            margin-bottom: 8px;
+        }
+        .shelf-slot {
+            width: 140px;
+            height: 180px;
+            border: 1px solid #ddd;
+            margin-right: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            cursor: pointer;
+            position: relative;
+            border-radius: 4px;
+            background: #ffffff;
+            overflow: hidden;
+            transition: border 0.2s;
+        }
+        .slot-content {
+            text-align: center;
+            font-size: 12px;
+            padding: 4px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .slot-icon {
+            font-size: 16px;
+            margin-bottom: 4px;
+            width: 100%;
+            height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .slot-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 2px;
+        }
+        .slot-name {
+            font-weight: bold;
+            font-size: 11px;
+            line-height: 1.2;
+            margin-bottom: 2px;
+        }
+        .slot-barcode {
+            font-size: 12px;
+            color: #000;
+            margin-bottom: 2px;
+        }
+        .slot-sales {
+            font-size: 10px;
+            color: #fff;
+            background: rgba(0,0,0,0.3);
+            padding: 1px 3px;
+            border-radius: 2px;
+        }
+        #tooltip {
+            position: absolute;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 999;
+            display: none;
+            pointer-events: none;
+        }
+        .product-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .product-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            gap: 10px;
+        }
+        .product-item.selected {
+            background: transparent;
+            border-left: 4px solid #3b82f6;
+        }
+        .product-icon {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .product-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+        .product-info {
+            flex: 1;
+        }
+        .product-name {
+            font-weight: bold;
+        }
+        .product-barcode {
+            font-size: 12px;
+            color: #666;
+        }
+        .product-metrics {
+            font-size: 11px;
+            color: #888;
+        }
+        .product-actions {
+            display: flex;
+            gap: 5px;
+        }
+        .product-actions button {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+        .modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+/* 续费弹窗专属，比登录框层级更高 */
+#renewModal {
+    z-index: 1000000 !important;
+}
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            width: 400px;
+        }
+        .ai-modal-content {
+            width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .ai-suggestion-item {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #3b82f6;
+            background: #f0f7ff;
+            border-radius: 0 4px 4px 0;
+        }
+        .hidden {
+            display: none;
+        }
+        .shelf-slot.drag-over {
+            border: 2px dashed #3b82f6 !important;
+            background: #eff6ff;
+        }
+        .product-item.dragging {
+            opacity: 0.5;
+        }
+        .login-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #000000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999999;
+        }
+        .login-box {
+            width: 400px;
+            padding: 30px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .login-box h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .login-input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .login-btn {
+            width: 100%;
+            padding: 10px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .login-btn:hover {
+            background: #2563eb;
+        }
+        .login-error {
+            color: #ef4444;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        .change-pwd-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #10b981;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            z-index: 100;
+        }
+        .change-pwd-btn:hover {
+            background: #059669;
+        }
+        .row-container {
+            display: flex;
+            justify-content: flex-start;
+            margin-bottom: 10px;
+            width: 100%;
+        }
+        .register-link {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #3b82f6;
+            cursor: pointer;
+        }
+        .admin-menu-btn {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: #f59e0b;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            z-index: 100;
+        }
+        .admin-menu-btn:hover {
+            background: #d97706;
+        }
+        .user-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 13px;
+        }
+        .user-table th, .user-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }
+        .user-table th {
+            background: #f3f4f6;
+        }
+        .user-tip {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+        }
+        /* 续费弹窗样式 */
+        .renew-modal-content {
+            width: 450px;
+            text-align: center;
+        }
+        .qrcode-area {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px dashed #ccc;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+        .qrcode-area img {
+            max-width: 200px;
+            max-height: 200px;
+            margin: 10px auto;
+            display: block;
+        }
+        .renew-btn {
+            background: #10b981;
+            margin: 10px 5px;
+        }
+        .renew-btn:hover {
+            background: #059669;
+        }
+        /* 新增用户弹窗样式 */
+        .add-user-modal-content {
+            width: 400px;
+        }
+        .add-user-modal-content input {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 登录/注册 入口 -->
+<div id="loginWrapper" class="login-wrapper">
+    <div class="login-box" id="loginBox">
+        <h2>便利店智能陈列管理系统</h2>
+        <input type="text" id="loginUser" class="login-input" placeholder="请输入账号">
+        <input type="password" id="loginPwd" class="login-input" placeholder="请输入密码">
+        <button class="login-btn" onclick="doLogin()">登录系统</button>
+        <div id="loginError" class="login-error"></div>
+        <div class="register-link" onclick="showRegister()">没有账号？点击注册</div>
+    </div>
+
+    <div class="login-box hidden" id="registerBox">
+        <h2>用户注册</h2>
+        <input type="text" id="regUser" class="login-input" placeholder="请设置账号">
+        <input type="password" id="regPwd" class="login-input" placeholder="请设置密码">
+        <button class="login-btn" onclick="doRegister()">提交注册</button>
+        <div id="regError" class="login-error"></div>
+        <div class="register-link" onclick="showLogin()">已有账号？返回登录</div>
+    </div>
+</div>
+
+<!-- 管理员菜单 -->
+<div id="adminMenuBtn" class="admin-menu-btn hidden" onclick="openAdminUserModal()">账号管理</div>
+<div id="changePwdBtn" class="change-pwd-btn hidden" onclick="openChangePwdModal()">修改密码</div>
+
+<!-- 账号管理弹窗 -->
+<div id="adminUserModal" class="modal hidden">
+    <div class="modal-content" style="width:700px;">
+        <h3>管理员 - 账号管理</h3>
+        <div style="text-align:right; margin-bottom:10px;">
+            <button onclick="openAddUserModal()" style="background:#10b981;">新增用户</button>
+            <button onclick="openUploadQRCodeModal()" style="background:#8b5cf6;">上传收款码</button>
+        </div>
+        <div style="max-height:60vh; overflow-y:auto;">
+            <table class="user-table">
+                <thead>
+                    <tr>
+                        <th>账号</th>
+                        <th>注册时间</th>
+                        <th>试用剩余</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="userTableBody"></tbody>
+            </table>
+        </div>
+        <div class="user-tip">普通用户免费试用7天，需管理员审核通过才能正常使用</div>
+        <button onclick="closeAdminUserModal()" style="margin-top:15px;">关闭</button>
+    </div>
+</div>
+
+<!-- 新增用户弹窗 -->
+<div id="addUserModal" class="modal hidden">
+    <div class="modal-content add-user-modal-content">
+        <h3>管理员新增用户</h3>
+        <input type="text" id="newAdminUser" placeholder="账号">
+        <input type="password" id="newAdminPwd" placeholder="密码">
+        <input type="number" id="newAdminDays" placeholder="初始使用天数" value="7">
+        <div style="text-align:right; margin-top:10px;">
+            <button onclick="saveAdminAddUser()">保存</button>
+            <button onclick="closeAddUserModal()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- 上传收款码弹窗 -->
+<div id="uploadQRCodeModal" class="modal hidden">
+    <div class="modal-content add-user-modal-content">
+        <h3>上传续费收款码</h3>
+        <p style="font-size:12px; color:#666; margin:10px 0;">用户续费弹窗会显示此收款码图片</p>
+        <input type="file" id="qrcodeFileInput" accept="image/*" onchange="previewQRCode(event)">
+        <div id="qrcodePreviewArea" style="margin:10px 0; text-align:center;"></div>
+        <div style="text-align:right; margin-top:10px;">
+            <button onclick="saveQRCode()">保存</button>
+            <button onclick="closeUploadQRCodeModal()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- 用户续费弹窗 -->
+<div id="renewModal" class="modal hidden">
+    <div class="modal-content renew-modal-content">
+        <h3>系统续费服务</h3>
+        <p style="margin:10px 0;">您的账号即将到期或已到期，请扫码续费使用</p>
+        <div class="qrcode-area">
+            <p>微信/支付宝扫码支付</p>
+            <div id="renewQRCodeArea"></div>
+            <p style="color:#3b82f6; font-weight:bold; margin-top:10px;">续费30天：¥50</p>
+          <!-- 新增这行，显示你的微信 -->
+            <p style="margin-top:15px; font-size:16px; color:#4ade80; font-weight:bold;">
+                续费请联系微信：909654682
+            </p>
+        </div>
+        <p style="font-size:12px; color:#666;">支付完成后，1个工作日内系统自动审核，审核通过后自动续期</p>
+        <button onclick="closeRenewModal()">关闭</button>
+    </div>
+</div>
+
+<div class="container">
+    <div class="header">
+        <h1>便利店智能陈列管理系统</h1>
+    </div>
+
+    <div class="store-manager" id="storeManagerBar">
+        <h3>门店管理</h3>
+        <select id="store-select" class="store-select" onchange="switchStore()">
+            <option value="">请选择门店</option>
+        </select>
+        <button onclick="addStore()" class="admin-only-btn">新增门店</button>
+        <button onclick="saveStoreData()" class="admin-only-btn">保存当前门店数据</button>
+        <button onclick="deleteStore()" class="admin-only-btn">删除当前门店</button>
+        <button onclick="openFullscreenView()">全屏视图</button>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <h3>商品总数</h3>
+            <div class="value" id="stat-products">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>总库存</h3>
+            <div class="value" id="stat-stock">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>月销总量</h3>
+            <div class="value" id="stat-sales">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>缺货预警</h3>
+            <div class="value" id="stat-lowstock">0</div>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <div class="view-toggle">
+            <button id="btn-shelf" class="active" onclick="switchDisplayView('shelf')">货架视图</button>
+            <button id="btn-cooler" onclick="switchDisplayView('cooler')">水柜视图</button>
+            <button id="btn-fence" onclick="switchDisplayView('fence')">风幕柜视图</button>
+        </div>
+        
+        <button onclick="toggleHeatmap()">销量热力图</button>
+        <button onclick="autoArrange()">智能排面</button>
+        <button onclick="editGridRows()">调整行</button>
+        <button onclick="editGridCols()">调整列</button>
+        <button onclick="exportTemplate()" class="admin-only-btn">导出模板</button>
+        <button onclick="importExcel()" class="admin-only-btn">导入Excel</button>
+        <button onclick="generateReport()" class="admin-only-btn">生成报表</button>
+        <button onclick="optimizeLayout()">AI优化建议</button>
+        <button onclick="logoutSystem()" style="background: #ef4444;">退出页面</button>
+    </div>
+<button onclick="easyBatchUpload()" style="background:#007bff;color:white;" class="admin-only-btn">🔥 批量传图（自动匹配）</button>
+         
+    <div class="main">
+        <div class="grid-section">
+            <div id="display-view">
+                <h3 id="display-title">货架陈列</h3>
+                <div class="display-container" id="display-container"></div>
+            </div>
+        </div>
+
+        <div class="product-section">
+            <h3>商品列表 | 当前选中：<span id="current-product">未选择</span></h3>
+            <div style="margin-bottom: 10px;">
+                <input 
+                    type="text" 
+                    id="product-search" 
+                    placeholder="搜索商品名称/条码..." 
+                    style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"
+                    oninput="filterProductList()"
+                >
+            </div>
+            <div class="product-list" id="product-list"></div>
+        </div>
+    </div>
+
+</div>
+
+<div id="tooltip"></div>
+
+<div id="product-detail" class="modal hidden">
+    <div class="modal-content">
+        <h3>商品详情</h3>
+        <p>名称：<span id="detail-name"></span></p>
+        <p>条码：<span id="detail-barcode"></span></p>
+        <p>品类：<span id="detail-category"></span></p>
+        <p>售价：<span id="detail-price"></span></p>
+        <p>成本：<span id="detail-cost"></span></p>
+        <p>库存：<span id="detail-stock"></span></p>
+        <p>月销：<span id="detail-sales"></span></p>
+        <p>月毛利：<span id="detail-profit"></span></p>
+        <button onclick="document.getElementById('product-detail').classList.add('hidden')">关闭</button>
+    </div>
+</div>
+
+<div id="excelModal" class="modal hidden">
+    <div class="modal-content">
+        <h3>导入Excel商品数据</h3>
+        <input type="file" id="excelFile" accept=".xls,.xlsx" onchange="handleExcelImport(event)">
+        <button onclick="loadExcelDemo()">加载演示数据</button>
+        <button onclick="closeExcelModal()">取消</button>
+    </div>
+</div>
+
+<div id="gridRowsModal" class="modal hidden">
+    <div class="modal-content">
+        <h3>调整网格行数</h3>
+        <p>行数：<input type="number" id="gridRowsInput" min="1" max="20"></p>
+        <button onclick="saveGridRows()">保存</button>
+        <button onclick="closeGridRowsModal()">取消</button>
+    </div>
+</div>
+
+<div id="gridColsModal" class="modal hidden">
+    <div class="modal-content">
+        <h3>调整网格列数</h3>
+        <p>列数：<input type="number" id="gridColsInput" min="1" max="15" value="15"></p>
+        <button onclick="saveGridCols()">保存</button>
+        <button onclick="closeGridColsModal()">取消</button>
+    </div>
+</div>
+
+<div id="addStoreModal" class="modal hidden">
+    <div class="modal-content">
+        <h3>新增门店</h3>
+        <p>门店名称：<input type="text" id="newStoreName" style="width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;"></p>
+        <button onclick="saveNewStore()">保存</button>
+        <button onclick="closeAddStoreModal()">取消</button>
+    </div>
+</div>
+
+<div id="aiSuggestionModal" class="modal hidden">
+    <div class="modal-content ai-modal-content">
+        <h3>AI智能优化建议</h3>
+        <div id="aiSuggestionContent"></div>
+        <button onclick="document.getElementById('aiSuggestionModal').classList.add('hidden')">关闭</button>
+    </div>
+</div>
+
+<div id="changePwdModal" class="modal hidden">
+    <div class="modal-content">
+        <h3>修改管理员密码</h3>
+        <p>当前密码：<input type="password" id="currentPwd" class="login-input" placeholder="请输入当前密码"></p>
+        <p>新密码：<input type="password" id="newPwd" class="login-input" placeholder="请输入新密码"></p>
+        <p>确认新密码：<input type="password" id="confirmPwd" class="login-input" placeholder="请再次输入新密码"></p>
+        <div id="pwdError" class="login-error"></div>
+        <button onclick="saveNewPwd()">保存</button>
+        <button onclick="closeChangePwdModal()">取消</button>
+    </div>
+</div>
+
+<div id="fullscreenView" class="fullscreen-view hidden">
+    <div class="fullscreen-controls">
+        <div class="zoom-control">
+            <span>缩放：</span>
+            <input type="range" id="zoomSlider" min="50" max="200" value="100" step="10" oninput="updateZoom()">
+            <span id="zoomValue">100%</span>
+        </div>
+        <button onclick="downloadDisplayImage()">下载图片</button>
+        <button onclick="closeFullscreenView()">关闭全屏</button>
+    </div>
+    <div class="display-container" id="fullscreen-display-container" style="transform-origin: top left; transition: transform 0.2s;"></div>
+</div>
+
+<script>
+document.addEventListener('dragover', function(e) {
+    e.preventDefault();
+}, false);
+document.addEventListener('drop', function(e) {
+    e.preventDefault();
+}, false);
+
+// ==============================================
+// 用户系统（注册/登录/审核/试用/管理）
+// 管理员账号：admin / 123456
+// ==============================================
+let currentLoginUser = null;
+let qrcodeImageBase64 = localStorage.getItem('qrcodeImage') || '';
+
+// 初始化用户数据
+function initUserSystem() {
+    if (!localStorage.getItem('userData')) {
+        const defaultData = {
+            admin: {
+                pwd: '123456',
+                role: 'admin',
+                regTime: new Date().toLocaleString(),
+                status: 'approved',
+                expireDate: null
+            }
+        };
+        localStorage.setItem('userData', JSON.stringify(defaultData));
+    }
+}
+initUserSystem();
+
+// 读取/保存用户数据
+function getUserData() {
+    return JSON.parse(localStorage.getItem('userData') || '{}');
+}
+function saveUserData(data) {
+    localStorage.setItem('userData', JSON.stringify(data));
+}
+
+// 切换登录/注册
+function showLogin() {
+    document.getElementById('loginBox').classList.remove('hidden');
+    document.getElementById('registerBox').classList.add('hidden');
+    document.getElementById('loginError').textContent = '';
+    document.getElementById('regError').textContent = '';
+}
+function showRegister() {
+    document.getElementById('loginBox').classList.add('hidden');
+    document.getElementById('registerBox').classList.remove('hidden');
+    document.getElementById('loginError').textContent = '';
+    document.getElementById('regError').textContent = '';
+}
+
+// 注册
+function doRegister() {
+    const user = document.getElementById('regUser').value.trim();
+    const pwd = document.getElementById('regPwd').value.trim();
+    const err = document.getElementById('regError');
+
+    if (!user || !pwd) {
+        err.textContent = '账号密码不能为空！';
+        return;
+    }
+    if (user.length < 3 || pwd.length < 3) {
+        err.textContent = '账号密码至少3位！';
+        return;
+    }
+    const data = getUserData();
+    if (data[user]) {
+        err.textContent = '账号已存在！';
+        return;
+    }
+
+    const expireDate = new Date();
+    expireDate.setDate(expireDate.getDate() + 7);
+
+    data[user] = {
+        pwd,
+        role: 'user',
+        regTime: new Date().toLocaleString(),
+        status: 'pending',
+        expireDate: expireDate.toISOString()
+    };
+    saveUserData(data);
+    alert('注册成功！请等待管理员审核，审核通过后可登录使用');
+    showLogin();
+}
+
+// 登录逻辑：账号密码校验 → 管理员直进 / 普通用户强制联网验权
+async function doLogin() {
+    const user = document.getElementById('loginUser').value.trim();
+    const pwd = document.getElementById('loginPwd').value.trim();
+    const err = document.getElementById('loginError');
+    const data = getUserData();
+
+    // 1. 空值判断
+    if (!user || !pwd) {
+        err.textContent = '账号密码不能为空！';
+        return;
+    }
+
+    // 2. 账号密码错误
+    if (!data[user] || data[user].pwd !== pwd) {
+        err.textContent = '账号或密码错误！';
+        return;
+    }
+
+    const u = data[user];
+
+    // 3. 账号未审核/禁用
+    if (u.role !== 'admin' && u.status !== 'approved') {
+        err.textContent = '账号未审核或已禁用，请联系管理员！';
+        return;
+    }
+
+    // 4. 账号本地过期拦截（双重校验）
+    if (u.role !== 'admin' && u.expireDate && new Date(u.expireDate) < new Date()) {
+        openRenewModal();
+        err.textContent = '账号已到期，请先续费！';
+        return;
+    }
+
+    // ========== 关键区分管理员 / 普通用户 ==========
+    // 管理员账号：跳过所有联网授权，直接进入系统
+    if (u.role === 'admin') {
+        currentLoginUser = { user, role: u.role };
+        document.getElementById('loginWrapper').style.display = 'none';
+        document.getElementById('changePwdBtn').classList.remove('hidden');
+        document.getElementById('adminMenuBtn').classList.remove('hidden');
+        document.querySelectorAll('.admin-only-btn').forEach(btn => btn.classList.remove('hidden'));
+        initSystem();
+        return;
+    }
+
+    // 普通用户：先隐藏登录框，再执行【强制联网授权】
+    currentLoginUser = { user, role: u.role };
+    document.getElementById('loginWrapper').style.display = 'none';
+    document.getElementById('changePwdBtn').classList.remove('hidden');
+    document.getElementById('adminMenuBtn').classList.remove('hidden');
+    document.querySelectorAll('.admin-only-btn').forEach(btn => btn.classList.remove('hidden'));
+
+    // 联网校验授权
+    const licenseValid = await checkLicenseAfterLogin();
+    if (licenseValid) {
+        // 授权通过 → 正常进入系统
+        initSystem();
+    } else {
+        // 授权失败/未付费/断网 → 重置登录状态，无法使用
+        currentLoginUser = null;
+        document.getElementById('loginWrapper').style.display = 'flex';
+        document.getElementById('changePwdBtn').classList.add('hidden');
+        document.getElementById('adminMenuBtn').classList.add('hidden');
+        err.textContent = '授权验证失败，请联系管理员开通权限！';
+    }
+}
+
+// 退出登录
+function logoutSystem() {
+    if (!confirm('确定退出登录吗？')) return;
+    currentLoginUser = null;
+    document.getElementById('loginWrapper').style.display = 'flex';
+    document.getElementById('adminMenuBtn').classList.add('hidden');
+    document.getElementById('changePwdBtn').classList.add('hidden');
+    showLogin();
+}
+
+// 管理员：打开账号管理
+function openAdminUserModal() {
+    if (currentLoginUser?.role !== 'admin') {
+        alert('无权限');
+        return;
+    }
+    renderUserTable();
+    document.getElementById('adminUserModal').classList.remove('hidden');
+}
+function closeAdminUserModal() {
+    document.getElementById('adminUserModal').classList.add('hidden');
+}
+
+// 渲染账号列表（日期选择版）
+function renderUserTable() {
+    const data = getUserData();
+    const tbody = document.getElementById('userTableBody');
+    tbody.innerHTML = '';
+
+    for (let user in data) {
+        const u = data[user];
+        const tr = document.createElement('tr');
+
+        let statusText = '';
+        let statusBtn = '';
+
+        if (u.role === 'admin') {
+            statusText = '管理员';
+            statusBtn = '-';
+        } else {
+            if (u.status === 'pending') {
+                statusText = '待审核';
+                statusBtn = `<button onclick="approveUser('${user}')">审核通过</button>`;
+            } else if (u.status === 'approved') {
+                statusText = '已通过';
+                statusBtn = `<button onclick="banUser('${user}')">禁用账号</button>`;
+            } else if (u.status === 'banned') {
+                statusText = '已禁用';
+                statusBtn = `<button onclick="approveUser('${user}')">启用账号</button>`;
+            }
+        }
+
+        let expireText = u.role === 'admin' ? '永久有效' : (u.expireDate ? new Date(u.expireDate).toLocaleDateString() : '未设置');
+        if (u.expireDate && new Date(u.expireDate) < new Date() && u.role !== 'admin') {
+            expireText = '<span style="color:red">已到期</span>';
+        }
+
+        let dateControls = '';
+        if (u.role !== 'admin') {
+            const expireDateStr = u.expireDate ? u.expireDate.split('T')[0] : '';
+            dateControls = `
+                <input type="date" id="expire-${user}" value="${expireDateStr}" style="width:120px; padding:4px; margin:0 4px;">
+                <button onclick="setExpireDate('${user}')" class="renew-btn" style="background:#10b981;">设置到期日期</button>
+            `;
+        }
+
+        tr.innerHTML = `
+            <td>${user}</td>
+            <td>${u.regTime}</td>
+            <td>${expireText}</td>
+            <td>${statusText}</td>
+            <td>
+                ${statusBtn}
+                ${dateControls}
+                ${u.role !== 'admin' ? `<button onclick="deleteUser('${user}')" style="background:#ef4444">删除</button>` : ''}
+            </td>
+        `;
+        tbody.appendChild(tr);
+    }
+}
+
+// 管理员：设置用户到期日期
+function setExpireDate(user) {
+    const dateInput = document.getElementById(`expire-${user}`);
+    const newExpireDate = dateInput.value;
+
+    if (!newExpireDate) {
+        alert('请先选择到期日期！');
+        return;
+    }
+
+    const data = getUserData();
+    if (data[user] && currentLoginUser?.role === 'admin') {
+        data[user].expireDate = new Date(newExpireDate).toISOString();
+        saveUserData(data);
+        renderUserTable();
+        alert(`用户【${user}】的到期日期已设置为：${newExpireDate}`);
+    }
+}
+
+// 管理员新增用户
+function openAddUserModal() {
+    document.getElementById('newAdminUser').value = '';
+    document.getElementById('newAdminPwd').value = '';
+    document.getElementById('newAdminDays').value = 7;
+    document.getElementById('addUserModal').classList.remove('hidden');
+}
+function closeAddUserModal() {
+    document.getElementById('addUserModal').classList.add('hidden');
+}
+function saveAdminAddUser() {
+    const user = document.getElementById('newAdminUser').value.trim();
+    const pwd = document.getElementById('newAdminPwd').value.trim();
+    const days = parseInt(document.getElementById('newAdminDays').value) || 7;
+
+    if (!user || !pwd) {
+        alert('账号密码不能为空！');
+        return;
+    }
+    if (user.length < 3 || pwd.length < 3) {
+        alert('账号密码至少3位！');
+        return;
+    }
+    const data = getUserData();
+    if (data[user]) {
+        alert('账号已存在！');
+        return;
+    }
+
+    data[user] = {
+        pwd,
+        role: 'user',
+        regTime: new Date().toLocaleString(),
+        status: 'approved',
+        trialDays: days
+    };
+    saveUserData(data);
+    renderUserTable();
+    closeAddUserModal();
+    alert(`用户【${user}】添加成功！初始使用天数：${days}天`);
+}
+
+// 管理员上传收款码
+function openUploadQRCodeModal() {
+    document.getElementById('uploadQRCodeModal').classList.remove('hidden');
+    document.getElementById('qrcodePreviewArea').innerHTML = qrcodeImageBase64 ? `<img src="${qrcodeImageBase64}" style="max-width:150px;">` : '<p style="color:#999;">未上传收款码</p>';
+}
+function closeUploadQRCodeModal() {
+    document.getElementById('uploadQRCodeModal').classList.add('hidden');
+}
+function previewQRCode(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        document.getElementById('qrcodePreviewArea').innerHTML = `<img src="${e.target.result}" style="max-width:150px;">`;
+    };
+    reader.readAsDataURL(file);
+}
+function saveQRCode() {
+    const fileInput = document.getElementById('qrcodeFileInput');
+    if (fileInput.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            qrcodeImageBase64 = e.target.result;
+            localStorage.setItem('qrcodeImage', qrcodeImageBase64);
+            alert('收款码上传成功！');
+            closeUploadQRCodeModal();
+        };
+        reader.readAsDataURL(fileInput.files[0]);
+    } else if (qrcodeImageBase64) {
+        alert('收款码已保存！');
+        closeUploadQRCodeModal();
+    } else {
+        alert('请先选择收款码图片！');
+    }
+}
+
+// 用户打开续费弹窗
+function openRenewModal() {
+    const modal = document.getElementById('renewModal');
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+    const qrcodeArea = document.getElementById('renewQRCodeArea');
+    if (qrcodeImageBase64) {
+        qrcodeArea.innerHTML = `<img src="${qrcodeImageBase64}" style="max-width:200px;">`;
+    } else {
+        qrcodeArea.innerHTML = '<p style="color:#999;">请联系管理员获取收款码</p>';
+    }
+}
+function closeRenewModal() {
+    const modal = document.getElementById('renewModal');
+    modal.classList.add('hidden');
+    modal.style.display = '';
+}
+
+// 审核通过
+function approveUser(user) {
+    const data = getUserData();
+    if (data[user]) {
+        data[user].status = 'approved';
+        saveUserData(data);
+        renderUserTable();
+    }
+}
+// 禁用
+function banUser(user) {
+    const data = getUserData();
+    if (data[user]) {
+        data[user].status = 'banned';
+        saveUserData(data);
+        renderUserTable();
+    }
+}
+// 删除账号
+function deleteUser(user) {
+    if (!confirm('确定删除该账号？')) return;
+    const data = getUserData();
+    delete data[user];
+    saveUserData(data);
+    renderUserTable();
+}
+
+// ================== 修改密码功能（已修复）==================
+function openChangePwdModal() {
+    document.getElementById('changePwdModal').classList.remove('hidden');
+    document.getElementById('pwdError').textContent = '';
+    document.getElementById('currentPwd').value = '';
+    document.getElementById('newPwd').value = '';
+    document.getElementById('confirmPwd').value = '';
+}
+function closeChangePwdModal() {
+    document.getElementById('changePwdModal').classList.add('hidden');
+}
+function saveNewPwd() {
+    const current = document.getElementById('currentPwd').value.trim();
+    const newPwd = document.getElementById('newPwd').value.trim();
+    const confirm = document.getElementById('confirmPwd').value.trim();
+    const err = document.getElementById('pwdError');
+
+    if (!current || !newPwd || !confirm) {
+        err.textContent = '请填写所有密码！';
+        return;
+    }
+    if (newPwd !== confirm) {
+        err.textContent = '两次新密码不一致！';
+        return;
+    }
+    if (newPwd.length < 3) {
+        err.textContent = '新密码至少3位！';
+        return;
+    }
+
+    const data = getUserData();
+    const username = currentLoginUser.user;
+    
+    if (data[username] && data[username].pwd === current) {
+        data[username].pwd = newPwd;
+        saveUserData(data);
+        alert('密码修改成功！请重新登录');
+        closeChangePwdModal();
+        logoutSystem();
+    } else {
+        err.textContent = '当前密码错误！';
+    }
+}
+
+// ==============================================
+// 原有系统代码（完全无改动）
+// ==============================================
+let storeData = {};
+let currentStoreId = '';
+let currentProduct = null;
+let heatmapEnabled = false;
+let currentDisplayView = 'shelf';
+let dragSource = null;
+let dragProductId = null;
+let currentZoom = 100;
+
+function initSystem() {
+    loadStoreDataFromLocalStorage();
+    initStoreSelector();
+    const storeIds = Object.keys(storeData);
+    if (storeIds.length > 0) {
+        currentStoreId = storeIds[0];
+        document.getElementById('store-select').value = currentStoreId;
+        loadCurrentStoreData();
+    } else {
+        initDefaultStore();
+    }
+}
+
+function initDefaultStore() {
+    const defaultStoreId = 'store_1';
+    storeData[defaultStoreId] = {
+        name: '默认演示门店',
+        products: [
+            { id: 1, name: '康师傅红烧牛肉面', barcode: '6920208007244', image: '', category: 'instant', sales30: 95, stock: 30, price: 4.0, cost: 2.2, icon: '🍜' },
+            { id: 2, name: '统一老坛酸菜面', barcode: '6925303709196', image: '', category: 'instant', sales30: 88, stock: 25, price: 4.5, cost: 2.3, icon: '🍜' },
+            { id: 3, name: '今麦郎弹面', barcode: '6924187800597', image: '', category: 'instant', sales30: 75, stock: 20, price: 3.8, cost: 2.0, icon: '🍜' },
+            { id: 4, name: '合味道杯面', barcode: '6937505199031', image: '', category: 'instant', sales30: 120, stock: 18, price: 6.0, cost: 3.2, icon: '🍜' },
+            { id: 5, name: '出前一丁', barcode: '6940791501280', image: '', category: 'instant', sales30: 65, stock: 15, price: 5.5, cost: 2.8, icon: '🍜' },
+            { id: 6, name: '白象大骨面', barcode: '6922905999998', image: '', category: 'instant', sales30: 80, stock: 22, price: 3.9, cost: 2.1, icon: '🍜' }
+        ],
+        shelfLayout: {},
+        coolerLayout: {},
+        fenceLayout: {},
+        gridConfig: {
+            shelf: { rows: 8, cols: 15 },
+            cooler: { rows: 4, cols: 15 },
+            fence: { rows: 5, cols: 15 }
+        },
+        displayNames: {
+            shelf: '货架区',
+            cooler: '水柜区',
+            fence: '风幕柜区'
+        }
+    };
+    currentStoreId = defaultStoreId;
+    saveStoreDataToLocalStorage();
+    initStoreSelector();
+    document.getElementById('store-select').value = currentStoreId;
+    loadCurrentStoreData();
+}
+
+function loadCurrentStoreData() {
+    if (!currentStoreId || !storeData[currentStoreId]) return;
+    renderDisplayView();
+    renderProductList();
+    updateStats();
+}
+
+function switchDisplayView(viewType) {
+    currentDisplayView = viewType;
+    document.getElementById('btn-shelf').classList.toggle('active', viewType === 'shelf');
+    document.getElementById('btn-cooler').classList.toggle('active', viewType === 'cooler');
+    document.getElementById('btn-fence').classList.toggle('active', viewType === 'fence');
+    
+    let title = '';
+    if(viewType === 'shelf') title = '货架陈列';
+    else if(viewType === 'cooler') title = '水柜陈列';
+    else if(viewType === 'fence') title = '风幕柜陈列';
+    
+    document.getElementById('display-title').textContent = title;
+    renderDisplayView();
+}
+
+function renderDisplayView() {
+    const container = document.getElementById('display-container');
+    container.innerHTML = '';
+    
+    const displayArea = document.createElement('div');
+    displayArea.className = `display-area ${currentDisplayView}`;
+    
+    const displayTitleDiv = document.createElement('div');
+    displayTitleDiv.className = 'display-title';
+    const titleInput = document.createElement('input');
+    titleInput.className = 'display-title-input';
+    titleInput.type = 'text';
+    titleInput.value = storeData[currentStoreId]?.displayNames?.[currentDisplayView] || getDefaultAreaTitle();
+    titleInput.onchange = function() {
+        if (!storeData[currentStoreId].displayNames) {
+            storeData[currentStoreId].displayNames = {};
+        }
+        storeData[currentStoreId].displayNames[currentDisplayView] = titleInput.value;
+        saveStoreDataToLocalStorage();
+    };
+    displayTitleDiv.appendChild(titleInput);
+    displayArea.appendChild(displayTitleDiv);
+    
+    let layout;
+    if (currentDisplayView === 'shelf') {
+        layout = storeData[currentStoreId].shelfLayout || {};
+    } else if (currentDisplayView === 'cooler') {
+        layout = storeData[currentStoreId].coolerLayout || {};
+    } else if (currentDisplayView === 'fence') {
+        if (!storeData[currentStoreId].fenceLayout) {
+            storeData[currentStoreId].fenceLayout = {};
+        }
+        layout = storeData[currentStoreId].fenceLayout;
+    }
+    
+    const config = getCurrentGridConfig()[currentDisplayView];
+    
+    for (let row = 0; row < config.rows; row++) {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'row-container';
+        
+        const levelLabel = document.createElement('div');
+        levelLabel.className = 'row-level-label';
+        levelLabel.textContent = `第${row + 1}层`;
+        rowDiv.appendChild(levelLabel);
+        
+        for (let col = 0; col < config.cols; col++) {
+            const slot = createDisplaySlot(row, col, layout);
+            rowDiv.appendChild(slot);
+        }
+        displayArea.appendChild(rowDiv);
+    }
+    container.appendChild(displayArea);
+}
+function getDefaultAreaTitle() {
+    if(currentDisplayView === 'shelf') return '货架区';
+    else if(currentDisplayView === 'cooler') return '水柜区';
+    else if(currentDisplayView === 'fence') return '风幕柜区';
+    return '';
+}
+
+function createDisplaySlot(row, col, layout) {
+    const key = `${row}_${col}`;
+    const slot = document.createElement('div');
+    slot.className = 'display-slot';
+    slot.dataset.row = row;
+    slot.dataset.col = col;
+    let productHtml = '<div style="color:#999; font-size:12px; margin-top: 40px;">空槽位</div>';
+    
+    if (layout[key]) {
+        const product = getCurrentProducts().find(p => p.id == layout[key]);
+        if (product) {
+            productHtml = `
+                ${product.image ? 
+                    `<img src="${product.image}" class="display-slot-img" alt="${product.name}">` : 
+                    `<div style="font-size:40px; height: 80px; display: flex; align-items: center; justify-content: center;">${product.icon}</div>`
+                }
+                <div class="display-slot-name">${product.name}</div>
+                <div class="display-slot-barcode">${product.barcode}</div>
+                ${heatmapEnabled ? `<div class="display-slot-sales">月销:${product.sales30}</div>` : ''}
+            `;
+        }
+    }
+    
+    slot.innerHTML = productHtml;
+    
+    slot.addEventListener('click', function() {
+        if (currentProduct) {
+            placeProduct(row, col);
+        } else if (layout[key]) {
+            let currentLayout;
+            if(currentDisplayView === 'shelf') currentLayout = getCurrentShelfLayout();
+            else if(currentDisplayView === 'cooler') currentLayout = getCurrentCoolerLayout();
+            else if(currentDisplayView === 'fence') currentLayout = getCurrentFenceLayout();
+            
+            delete currentLayout[key];
+            renderDisplayView();
+        }
+    });
+    
+    slot.setAttribute('draggable', true);
+    slot.addEventListener('dragstart', function(e) {
+        if (layout[key]) {
+            dragSource = 'slot';
+            dragProductId = layout[key];
+            e.dataTransfer.setData('text/plain', dragProductId);
+            slot.style.opacity = '0.6';
+        }
+    });
+    slot.addEventListener('dragend', function() {
+        slot.style.opacity = '1';
+        dragSource = null;
+        dragProductId = null;
+    });
+    slot.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        slot.style.border = '2px dashed #3b82f6';
+    });
+    slot.addEventListener('dragleave', function() {
+        slot.style.border = '1px solid #d4a373';
+    });
+    slot.addEventListener('drop', function(e) {
+        e.preventDefault();
+        slot.style.border = '1px solid #d4a373';
+        
+        if (dragSource === 'list' && dragProductId) {
+            placeProduct(row, col);
+        } else if (dragSource === 'slot' && dragProductId) {
+            let currentLayout;
+            if(currentDisplayView === 'shelf') currentLayout = getCurrentShelfLayout();
+            else if(currentDisplayView === 'cooler') currentLayout = getCurrentCoolerLayout();
+            else if(currentDisplayView === 'fence') currentLayout = getCurrentFenceLayout();
+            
+            const targetProductId = currentLayout[key];
+            let sourceRow, sourceCol;
+            
+            for (let r = 0; r < getCurrentGridConfig()[currentDisplayView].rows; r++) {
+                for (let c = 0; c < getCurrentGridConfig()[currentDisplayView].cols; c++) {
+                    const k = `${r}_${c}`;
+                    if (currentLayout[k] == dragProductId) {
+                        sourceRow = r;
+                        sourceCol = c;
+                        break;
+                    }
+                }
+            }
+            
+            if (sourceRow !== undefined) {
+                currentLayout[`${sourceRow}_${sourceCol}`] = targetProductId;
+                currentLayout[key] = dragProductId;
+                renderDisplayView();
+            }
+        }
+    });
+    
+    return slot;
+}
+
+function placeProduct(row, col) {
+    if (!currentProduct) return;
+    
+    let layout;
+    if(currentDisplayView === 'shelf') layout = getCurrentShelfLayout();
+    else if(currentDisplayView === 'cooler') layout = getCurrentCoolerLayout();
+    else if(currentDisplayView === 'fence') layout = getCurrentFenceLayout();
+    
+    layout[`${row}_${col}`] = currentProduct.id;
+    renderDisplayView();
+    currentProduct = null;
+    document.getElementById('current-product').textContent = '未选择';
+    document.querySelectorAll('.product-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+}
+
+function openFullscreenView() {
+    document.getElementById('fullscreenView').classList.remove('hidden');
+    document.getElementById('zoomSlider').value = 100;
+    document.getElementById('zoomValue').textContent = '100%';
+    currentZoom = 100;
+    renderFullscreenView();
+}
+
+function closeFullscreenView() {
+    document.getElementById('fullscreenView').classList.add('hidden');
+}
+
+function updateZoom() {
+    currentZoom = parseInt(document.getElementById('zoomSlider').value);
+    document.getElementById('zoomValue').textContent = `${currentZoom}%`;
+    const container = document.getElementById('fullscreen-display-container');
+    container.style.transform = `scale(${currentZoom / 100})`;
+}
+
+function renderFullscreenView() {
+    const fullscreenContainer = document.getElementById('fullscreen-display-container');
+    fullscreenContainer.innerHTML = '';
+    
+    const displayArea = document.createElement('div');
+    displayArea.className = `display-area ${currentDisplayView}`;
+    
+    const displayTitleDiv = document.createElement('div');
+    displayTitleDiv.className = 'display-title';
+    const titleInput = document.createElement('input');
+    titleInput.className = 'display-title-input';
+    titleInput.type = 'text';
+    titleInput.value = storeData[currentStoreId]?.displayNames?.[currentDisplayView] || getDefaultAreaTitle();
+    titleInput.onchange = function() {
+        if (!storeData[currentStoreId].displayNames) {
+            storeData[currentStoreId].displayNames = {};
+        }
+        storeData[currentStoreId].displayNames[currentDisplayView] = titleInput.value;
+        saveStoreDataToLocalStorage();
+    };
+    displayTitleDiv.appendChild(titleInput);
+    displayArea.appendChild(displayTitleDiv);
+    
+    let layout;
+    if(currentDisplayView === 'shelf') layout = getCurrentShelfLayout();
+    else if(currentDisplayView === 'cooler') layout = getCurrentCoolerLayout();
+    else if(currentDisplayView === 'fence') layout = getCurrentFenceLayout();
+    
+    const config = getCurrentGridConfig()[currentDisplayView];
+    
+            for (let row = 0; row < config.rows; row++) {
+            const rowDiv = document.createElement('div');
+            rowDiv.className = 'row-container';
+            
+            const levelLabel = document.createElement('div');
+            levelLabel.className = 'row-level-label';
+            levelLabel.textContent = `第${row + 1}层`;
+            rowDiv.appendChild(levelLabel);
+            
+            for (let col = 0; col < config.cols; col++) {
+                const slot = createDisplaySlot(row, col, layout);
+                rowDiv.appendChild(slot);
+            }
+            displayArea.appendChild(rowDiv);
+        }
+        fullscreenContainer.appendChild(displayArea);
+        fullscreenContainer.style.transform = `scale(${currentZoom / 100})`;
+    }
+
+    function downloadDisplayImage() {
+    const container = document.getElementById('fullscreen-display-container');
+    
+    // 1. 临时恢复缩放并设置可见区域，确保能看到全部内容
+    const originalTransform = container.style.transform;
+    const originalOverflow = container.style.overflow;
+    const originalHeight = container.style.height;
+
+    // 关键：强制显示所有内容，不裁剪
+    container.style.transform = 'scale(1)';
+    container.style.overflow = 'visible';
+    container.style.height = 'auto';
+
+    // 2. 获取完整内容的实际宽高（包含超出视口的部分）
+    const fullWidth = container.scrollWidth;
+    const fullHeight = container.scrollHeight;
+
+    html2canvas(container, {
+        backgroundColor: '#ffffff',
+        scale: 3, // 高清3倍采样
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        letterRendering: true,
+        scrollX: 0,
+        scrollY: 0,
+        width: fullWidth,
+        height: fullHeight
+    }).then(function(canvas) {
+        // 3. 截图完成后，恢复全屏模式的原始状态
+        container.style.transform = originalTransform;
+        container.style.overflow = originalOverflow;
+        container.style.height = originalHeight;
+
+        // 4. 下载图片
+        canvas.toBlob(function(blob) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `门店${currentDisplayView === 'shelf' ? '货架' : currentDisplayView === 'cooler' ? '水柜' : '风幕柜'}陈列图_完整高清_${new Date().getTime()}.png`;
+            link.click();
+            setTimeout(() => {
+                URL.revokeObjectURL(url);
+            }, 100);
+        }, 'image/png', 1.0);
+    }).catch(function(err) {
+        console.error('下载失败:', err);
+        alert('图片下载失败，尝试使用浏览器截图功能！');
+        // 出错时也要恢复状态，避免界面卡住
+        container.style.transform = originalTransform;
+        container.style.overflow = originalOverflow;
+        container.style.height = originalHeight;
+    });
+}
+
+    function toggleHeatmap() {
+        heatmapEnabled = !heatmapEnabled;
+        renderDisplayView();
+        alert(heatmapEnabled ? '热力图已开启（显示月销量）' : '热力图已关闭');
+    }
+
+    function editGridRows() {
+        const config = getCurrentGridConfig()[currentDisplayView];
+        document.getElementById('gridRowsInput').value = config.rows;
+        document.getElementById('gridRowsModal').classList.remove('hidden');
+    }
+    function closeGridRowsModal() { 
+        document.getElementById('gridRowsModal').classList.add('hidden'); 
+    }
+    function saveGridRows() {
+        const r = +document.getElementById('gridRowsInput').value;
+        if(r<1||r>20) return alert('行数范围：1-20行');
+        const config = getCurrentGridConfig();
+        config[currentDisplayView].rows = r;
+        
+        let layout;
+        if(currentDisplayView === 'shelf') layout = getCurrentShelfLayout();
+        else if(currentDisplayView === 'cooler') layout = getCurrentCoolerLayout();
+        else if(currentDisplayView === 'fence') layout = getCurrentFenceLayout();
+        
+        Object.keys(layout).forEach(k => {
+            const row = parseInt(k.split('_')[0]);
+            if (row >= r) delete layout[k];
+        });
+        renderDisplayView();
+        closeGridRowsModal();
+    }
+
+    function editGridCols() {
+        const config = getCurrentGridConfig()[currentDisplayView];
+        document.getElementById('gridColsInput').value = config.cols;
+        document.getElementById('gridColsModal').classList.remove('hidden');
+    }
+    function closeGridColsModal() { 
+        document.getElementById('gridColsModal').classList.add('hidden'); 
+    }
+    function saveGridCols() {
+        const c = +document.getElementById('gridColsInput').value;
+        if(c<1||c>20) return alert('列数范围：1-20列');
+        const config = getCurrentGridConfig();
+        config[currentDisplayView].cols = c;
+        
+        let layout;
+        if(currentDisplayView === 'shelf') layout = getCurrentShelfLayout();
+        else if(currentDisplayView === 'cooler') layout = getCurrentCoolerLayout();
+        else if(currentDisplayView === 'fence') layout = getCurrentFenceLayout();
+        
+        Object.keys(layout).forEach(k => {
+            const col = parseInt(k.split('_')[1]);
+            if (col >= c) delete layout[k];
+        });
+        renderDisplayView();
+        closeGridColsModal();
+    }
+
+    function initStoreSelector() {
+        const select = document.getElementById('store-select');
+        select.innerHTML = '<option value="">请选择门店</option>';
+        Object.keys(storeData).forEach(storeId => {
+            const option = document.createElement('option');
+            option.value = storeId;
+            option.textContent = storeData[storeId].name;
+            select.appendChild(option);
+        });
+    }
+    function switchStore() {
+        const newStoreId = document.getElementById('store-select').value;
+        if (!newStoreId || newStoreId === currentStoreId) return;
+        if (currentStoreId && confirm('是否保存当前门店的修改？')) {
+            saveStoreData();
+        }
+        currentStoreId = newStoreId;
+        loadCurrentStoreData();
+    }
+    function addStore() {
+        document.getElementById('newStoreName').value = '';
+        document.getElementById('addStoreModal').classList.remove('hidden');
+    }
+    function closeAddStoreModal() {
+        document.getElementById('addStoreModal').classList.add('hidden');
+    }
+    function saveNewStore() {
+        const storeName = document.getElementById('newStoreName').value.trim();
+        if (!storeName) {
+            alert('请输入门店名称！');
+            return;
+        }
+        const storeId = 'store_' + Date.now();
+        storeData[storeId] = {
+            name: storeName,
+            products: [],
+            shelfLayout: {},
+            coolerLayout: {},
+            fenceLayout: {},
+            gridConfig: {
+                shelf: { rows: 8, cols: 15 },
+                cooler: { rows: 4, cols: 15 },
+                fence: { rows: 5, cols: 15 }
+            },
+            displayNames: {
+                shelf: '货架区',
+                cooler: '水柜区',
+                fence: '风幕柜区'
+            }
+        };
+        saveStoreDataToLocalStorage();
+        initStoreSelector();
+        document.getElementById('store-select').value = storeId;
+        currentStoreId = storeId;
+        loadCurrentStoreData();
+        closeAddStoreModal();
+        alert('门店创建成功！');
+    }
+    function deleteStore() {
+        if (!currentStoreId) {
+            alert('请先选择门店！');
+            return;
+        }
+        if (confirm(`确定删除门店【${storeData[currentStoreId].name}】吗？此操作不可恢复！`)) {
+            delete storeData[currentStoreId];
+            saveStoreDataToLocalStorage();
+            initStoreSelector();
+            currentStoreId = '';
+            loadCurrentStoreData();
+            alert('门店删除成功！');
+        }
+    }
+    function saveStoreData() {
+        if (!currentStoreId) {
+            alert('请先选择门店！');
+            return;
+        }
+        const store = storeData[currentStoreId];
+        store.products = [...getCurrentProducts()];
+        store.shelfLayout = { ...getCurrentShelfLayout() };
+        store.coolerLayout = { ...getCurrentCoolerLayout() };
+        store.fenceLayout = { ...getCurrentFenceLayout() };
+        store.gridConfig = { ...getCurrentGridConfig() };
+        saveStoreDataToLocalStorage();
+        alert('门店数据保存成功！');
+    }
+    function loadStoreDataFromLocalStorage() {
+        const data = localStorage.getItem('convenienceStoreData');
+        if (data) {
+            try {
+                storeData = JSON.parse(data);
+            } catch (e) {
+                console.error('加载门店数据失败：', e);
+                storeData = {};
+            }
+        } else {
+            storeData = {};
+        }
+    }
+    function saveStoreDataToLocalStorage() {
+        try {
+            localStorage.setItem('convenienceStoreData', JSON.stringify(storeData));
+        } catch (e) {
+            console.error('保存门店数据失败：', e);
+            alert('数据保存失败，请检查浏览器存储权限！');
+        }
+    }
+    function getCurrentProducts() {
+        return storeData[currentStoreId]?.products || [];
+    }
+    function getCurrentShelfLayout() {
+        return storeData[currentStoreId]?.shelfLayout || {};
+    }
+    function getCurrentCoolerLayout() {
+        return storeData[currentStoreId]?.coolerLayout || {};
+    }
+    function getCurrentFenceLayout() {
+        return storeData[currentStoreId]?.fenceLayout || {};
+    }
+    function getCurrentGridConfig() {
+        return storeData[currentStoreId]?.gridConfig || {
+            shelf: { rows: 8, cols: 15 },
+            cooler: { rows: 4, cols: 15 },
+            fence: { rows: 5, cols: 15 }
+        };
+    }
+    function renderProductList() {
+        const list = document.getElementById('product-list');
+        list.innerHTML = '';
+        const products = getCurrentProducts();
+        products.forEach(product => {
+            const item = document.createElement('div');
+            item.className = 'product-item';
+            item.dataset.id = product.id;
+            item.draggable = true;
+            item.addEventListener('dragstart', (e) => {
+                dragSource = 'list';
+                dragProductId = product.id;
+                currentProduct = product;
+                document.getElementById('current-product').textContent = product.name;
+                item.classList.add('dragging');
+                e.dataTransfer.setData('text/plain', product.id);
+            });
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+            });
+            item.innerHTML = `
+                <div class="product-icon">${product.image ? `<img src="${product.image}">` : product.icon}</div>
+                <div class="product-info">
+                    <div class="product-name">${product.name}</div>
+                    <div class="product-barcode">${product.barcode}</div>
+                    <div class="product-metrics">¥${product.price} | 库存:${product.stock} | 月销:${product.sales30}</div>
+                </div>
+                <div class="product-actions">
+                    <button onclick="selectProduct(${product.id})">选择</button>
+                    <button onclick="showProductDetail(${product.id})">详情</button>
+                    <button onclick="uploadImage(${product.id})">传图</button>
+                    ${product.image ? `<button onclick="deleteImage(${product.id})">删图</button>` : ''}
+                </div>
+            `;
+            item.addEventListener('click', function() {
+                selectProduct(product.id);
+            });
+            list.appendChild(item);
+        });
+    }
+    function filterProductList() {
+        const txt = document.getElementById('product-search').value.toLowerCase();
+        document.querySelectorAll('.product-item').forEach(item => {
+            const name = item.querySelector('.product-name').textContent.toLowerCase();
+            const code = item.querySelector('.product-barcode').textContent.toLowerCase();
+            item.style.display = (name.includes(txt) || code.includes(txt)) ? 'flex' : 'none';
+        });
+    }
+    function selectProduct(id) {
+        document.querySelectorAll('.product-item').forEach(i => i.classList.remove('selected'));
+        const item = document.querySelector(`.product-item[data-id="${id}"]`);
+        if (item) item.classList.add('selected');
+        currentProduct = getCurrentProducts().find(p => p.id === id);
+        document.getElementById('current-product').textContent = currentProduct?.name || '未选择';
+    }
+    function showProductDetail(id) {
+        const p = getCurrentProducts().find(x => x.id === id);
+        if (!p) return;
+        document.getElementById('detail-name').textContent = p.name;
+        document.getElementById('detail-barcode').textContent = p.barcode;
+        document.getElementById('detail-category').textContent = { beverage: '饮料', snack: '零食', instant: '速食', daily: '日用品' }[p.category] || '其他';
+        document.getElementById('detail-price').textContent = `¥${p.price}`;
+        document.getElementById('detail-cost').textContent = `¥${p.cost}`;
+        document.getElementById('detail-stock').textContent = p.stock;
+        document.getElementById('detail-stock').className = p.stock < 10 ? 'text-red' : '';
+        document.getElementById('detail-sales').textContent = p.sales30;
+        document.getElementById('detail-profit').textContent = `¥${((p.price - p.cost) * p.sales30).toFixed(2)}`;
+        document.getElementById('product-detail').classList.remove('hidden');
+    }
+    function updateStats() {
+        const products = getCurrentProducts();
+        const total = products.length;
+        const stock = products.reduce((s, x) => s + x.stock, 0);
+        const sales = products.reduce((s, x) => s + x.sales30, 0);
+        const low = products.filter(x => x.stock < 10).length;
+        document.getElementById('stat-products').textContent = total;
+        document.getElementById('stat-stock').textContent = stock;
+        document.getElementById('stat-sales').textContent = sales;
+        document.getElementById('stat-lowstock').textContent = low;
+        document.getElementById('stat-lowstock').className = low > 0 ? 'text-red' : '';
+    }
+    function autoArrange() {
+        if (!currentStoreId) {
+            alert('请先选择门店！');
+            return;
+        }
+        const products = getCurrentProducts();
+        if (products.length === 0) {
+            alert('暂无商品数据！');
+            return;
+        }
+        const sorted = [...products].sort((a,b)=>b.sales30 - a.sales30);
+        let layout;
+        if(currentDisplayView === 'shelf') layout = getCurrentShelfLayout();
+        else if(currentDisplayView === 'cooler') layout = getCurrentCoolerLayout();
+        else if(currentDisplayView === 'fence') layout = getCurrentFenceLayout();
+        
+        const config = getCurrentGridConfig()[currentDisplayView];
+        Object.keys(layout).forEach(k=>delete layout[k]);
+        let idx=0;
+        for(let r=0;r<config.rows && idx<sorted.length;r++){
+            for(let c=0;c<config.cols && idx<sorted.length;c++){
+                layout[`${r}_${c}`] = sorted[idx].id;
+                idx++;
+            }
+        }
+        renderDisplayView();
+        alert('智能排面完成！');
+    }
+    function importExcel() { 
+        document.getElementById('excelModal').classList.remove('hidden'); 
+    }
+    function closeExcelModal() { 
+        document.getElementById('excelModal').classList.add('hidden'); 
+    }
+    function handleExcelImport(e) {
+        if (!currentStoreId) {
+            alert('请先选择门店！');
+            closeExcelModal();
+            return;
+        }
+        const f = e.target.files[0];
+        if(!f) return;
+        const r = new FileReader();
+        r.onload = ()=>{
+            const wb = XLSX.read(new Uint8Array(r.result),{type:'array'});
+            const arr = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            const newProducts = arr.map((it,i)=>({
+                id:1000+i,
+                name:it.商品名称||it.name||'未知',
+                barcode:it.商品条码||it.barcode||'',
+                image: '',
+                sales30:+it.商品销量||it.sales30||0,
+                stock:+it.商品库存||it.stock||10,
+                price:+it.售价||it.price||0,
+                cost:+it.成本价||it.cost||0,
+                category:'instant',
+                icon:'🍜'
+            }));
+            storeData[currentStoreId].products = newProducts;
+            renderProductList();
+            updateStats();
+            closeExcelModal();
+            alert('商品数据导入成功！');
+        };
+        r.readAsArrayBuffer(f);
+    }
+    function loadExcelDemo() {
+        if (!currentStoreId) {
+            alert('请先选择门店！');
+            return;
+        }
+        storeData[currentStoreId].products = [
+            { id: 100, name: '演示可乐', barcode: '6921168500102', image: '', category: 'beverage', sales30: 150, stock: 25, price: 3.5, cost: 2.0, icon: '🥤' },
+            { id: 101, name: '演示薯片', barcode: '6921168520200', image: '', category: 'snack', sales30: 120, stock: 18, price: 6.5, cost: 3.0, icon: '🥔' }
+        ];
+        renderProductList();
+        updateStats();
+        closeExcelModal();
+    }
+
+    function exportTemplate() {
+        const headers = ["商品名称", "商品条码", "商品销量", "商品库存", "售价", "成本价", "商品图片"];
+        const data = [
+            ["示例可乐", "6921168500102", "150", "25", "3.5", "2.0", ""],
+            ["示例薯片", "6921168520200", "120", "18", "6.5", "3.0", ""]
+        ];
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "商品模板");
+        XLSX.writeFile(wb, "商品导入模板.xlsx");
+    }
+
+    function generateReport() {
+        const config = getCurrentGridConfig();
+        const shelfTotal = config.shelf.rows * config.shelf.cols;
+        const coolerTotal = config.cooler.rows * config.cooler.cols;
+        const fenceTotal = config.fence.rows * config.fence.cols;
+        
+        const shelfUsed = Object.keys(getCurrentShelfLayout()).length;
+        const coolerUsed = Object.keys(getCurrentCoolerLayout()).length;
+        const fenceUsed = Object.keys(getCurrentFenceLayout()).length;
+        
+        const shelfRate = Math.round(shelfUsed / shelfTotal * 100);
+        const coolerRate = Math.round(coolerUsed / coolerTotal * 100);
+        const fenceRate = Math.round(fenceUsed / fenceTotal * 100);
+        
+        const totalRevenue = getCurrentProducts().reduce((s,x)=>s + (x.price - x.cost) * x.sales30, 0).toFixed(0);
+        alert(`货架陈列率：${shelfRate}%\n水柜陈列率：${coolerRate}%\n风幕柜陈列率：${fenceRate}%\n预估月毛利：¥${totalRevenue}`);
+    }
+
+    function optimizeLayout() {
+        const products = getCurrentProducts();
+        if (products.length === 0) {
+            alert('暂无商品数据，无法生成优化建议！');
+            return;
+        }
+        const stockSuggestions = products.map(p => {
+            const safeStock = Math.ceil(p.sales30 * 1.5);
+            const shortage = safeStock - p.stock;
+            return {
+                product: p,
+                safeStock,
+                shortage,
+                suggestion: shortage > 0 ? `需补货${shortage}件` : `库存充足（建议上限${safeStock}件）`
+            };
+        }).filter(item => item.shortage > 0 || item.product.stock < 5);
+        const categoryGroups = {};
+        products.forEach(p => {
+            if (!categoryGroups[p.category]) {
+                categoryGroups[p.category] = [];
+            }
+            categoryGroups[p.category].push(p);
+        });
+        const positionSuggestions = [];
+        const categoryPos = {
+            'beverage': '水柜区/风幕柜前排（高曝光位置）',
+            'snack': '货架区中层（易拿取位置）',
+            'instant': '货架区中层（核心位置）',
+            'daily': '货架区后排（稳定需求位置）'
+        };
+        Object.keys(categoryGroups).forEach(cat => {
+            const topProducts = [...categoryGroups[cat]].sort((a,b)=>b.sales30 - a.sales30).slice(0,3);
+            if (topProducts.length > 0) {
+                positionSuggestions.push({
+                    category: cat,
+                    position: categoryPos[cat] || '货架区通用位置',
+                    topProducts: topProducts
+                });
+            }
+        });
+        const topSales = [...products].sort((a,b)=>b.sales30 - a.sales30).slice(0,5);
+        let html = `
+            <div style="margin-bottom: 20px;">
+                <h4>📦 库存预警建议</h4>
+                ${stockSuggestions.length > 0 ? 
+                    stockSuggestions.map(item => `
+                        <div class="ai-suggestion-item">
+                            <strong>${item.product.name}</strong>：
+                            当前库存${item.product.stock}件，安全库存${item.safeStock}件，${item.suggestion}
+                        </div>
+                    `).join('') : 
+                    '<p>所有商品库存充足</p>'
+                }
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <h4>📍 陈列位置建议</h4>
+                ${positionSuggestions.map(item => `
+                    <div class="ai-suggestion-item">
+                        <strong>${getCategoryName(item.category)}</strong>：建议放置在${item.position}
+                        <br>该品类热销商品：${item.topProducts.map(p=>p.name).join('、')}
+                    </div>
+                `).join('')}
+            </div>
+            
+            <div>
+                <h4>🔥 全站热销商品</h4>
+                <div class="ai-suggestion-item">
+                   建议放置在门店入口显眼位置：${topSales.map(p=>p.name).join('、')}
+                </div>
+            </div>
+        `;
+        document.getElementById('aiSuggestionContent').innerHTML = html;
+        document.getElementById('aiSuggestionModal').classList.remove('hidden');
+    }
+
+    function getCategoryName(cat) {
+        const names = {
+            'beverage': '饮料类',
+            'snack': '零食类',
+            'instant': '速食类',
+            'daily': '日用品类'
+        };
+        return names[cat] || '其他类';
+    }
+
+    function uploadImage(id){
+        const p = getCurrentProducts().find(x=>x.id===id);
+        if (!p) return;
+        const inp = document.createElement('input');
+        inp.type='file';
+        inp.accept='image/*';
+        inp.onchange=e=>{
+            const f = e.target.files[0];
+            if(!f) return;
+            const r = new FileReader();
+            r.onload=e=>{
+                p.image=e.target.result;
+                renderProductList();
+                renderDisplayView();
+            };
+            r.readAsDataURL(f);
+        };
+        inp.click();
+    }
+
+    function deleteImage(id){
+        const p = getCurrentProducts().find(x=>x.id===id);
+        if (p) {
+            p.image='';
+            renderProductList();
+            renderDisplayView();
+        }
+    }
+
+    function logOperation(msg){
+        console.log(`[${new Date().toLocaleString()}] ${msg}`);
+    }
+
+    // ====================== 超级批量传图（自动匹配商品名）======================
+    function easyBatchUpload() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = 'image/*';
+      
+      input.onchange = function(e) {
+        const files = e.target.files;
+        const productList = storeData[currentStoreId].products;
+        
+        for(let file of files) {
+          const name = file.name.replace(/\.\w+$/, '');
+          const reader = new FileReader();
+          
+          reader.onload = function(ev) {
+            const p = productList.find(x => x.name == name);
+            if(p) p.image = ev.target.result;
+            renderProductList();
+            renderDisplayView();
+          };
+          reader.readAsDataURL(file);
+        }
+        alert('批量上传完成！所有同名商品自动显示图片');
+      };
+      input.click();
+    }
+</script>
+</body>
+</html>
